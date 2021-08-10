@@ -165,11 +165,14 @@ class Article(models.Model):
         )
         if not self.id:
             self.save()
-        revisions = self.articlerevision_set.all()
-        try:
-            new_revision.revision_number = revisions.latest().revision_number + 1
-        except ArticleRevision.DoesNotExist:
-            new_revision.revision_number = 0
+
+        if not new_revision.revision_number:
+            revisions = self.articlerevision_set.all()
+            try:
+                new_revision.revision_number = revisions.latest().revision_number + 1
+            except ArticleRevision.DoesNotExist:
+                new_revision.revision_number = 1
+
         new_revision.article = self
         new_revision.previous_revision = self.current_revision
         if save:

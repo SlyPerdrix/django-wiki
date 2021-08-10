@@ -188,11 +188,14 @@ class RevisionPlugin(ArticlePlugin):
         )
         if not self.id:
             self.save()
-        revisions = self.revision_set.all()
-        try:
-            new_revision.revision_number = revisions.latest().revision_number + 1
-        except RevisionPluginRevision.DoesNotExist:
-            new_revision.revision_number = 0
+
+        if not new_revision.revision_number:
+            revisions = self.revision_set.all()
+            try:
+                new_revision.revision_number = revisions.latest().revision_number + 1
+            except RevisionPluginRevision.DoesNotExist:
+                new_revision.revision_number = 1
+
         new_revision.plugin = self
         new_revision.previous_revision = self.current_revision
         if save:
@@ -256,7 +259,7 @@ def on_simple_plugins_pre_save(**kwargs):
         new_revision = ArticleRevision()
         new_revision.inherit_predecessor(instance.article)
         new_revision.automatic_log = instance.get_logmessage()
-        new_revision.save()
+        instance.article.add_revision(new_revision)
 
         instance.article_revision = new_revision
 
