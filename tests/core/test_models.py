@@ -8,6 +8,10 @@ from wiki.managers import ArticleManager
 from wiki.models import Article
 from wiki.models import ArticleRevision
 from wiki.models import URLPath
+from wiki.models.pluginbase import ReusablePlugin
+from wiki.models.pluginbase import RevisionPlugin
+from wiki.models.pluginbase import RevisionPluginRevision
+from wiki.models.pluginbase import SimplePlugin
 from wiki.urls import WikiURLPatterns
 
 User = get_user_model()
@@ -136,15 +140,124 @@ class ArticleModelTest(TestCase):
         # actual cached content test
         self.assertRegexpMatches(a.get_cached_content(), expected)
 
-    def test_articlerevision_presave_signals(self):
+    def test_articlerevision_relation_addrevision(self):
         a = Article.objects.create()
-        ar1 = ArticleRevision(article=a, title="revision1")
 
-        a.add_revision(ar1)
-        self.assertEqual(ar1, a.current_revision)
+        r1 = ArticleRevision(title="revision1")
+        a.add_revision(r1)
 
-        ar2 = ArticleRevision(article=a, title="revision2")
+        r2 = ArticleRevision(title="revision2", article=a)
+        r2.save()
+        a.add_revision(r2)
 
-        ar2.save()
+        r3 = ArticleRevision(title="revision2")
+        a.add_revision(r3)
 
-        self.assertEqual(ar2.previous_revision, ar1)
+        self.assertEqual(a.current_revision, r3)
+
+        self.assertEqual(r1.revision_number, 1)
+        self.assertEqual(r2.revision_number, 2)
+        self.assertEqual(r3.revision_number, 3)
+
+        self.assertIsNone(r1.previous_revision)
+        self.assertEqual(r2.previous_revision, r1)
+        self.assertEqual(r3.previous_revision, r2)
+
+    def test_articlerevision_saving(self):
+        a = Article.objects.create()
+
+        r1 = ArticleRevision(article=a, title="revision3a")
+        r1.save()
+        r2 = ArticleRevision(article=a, title="revision3b")
+        r2.save()
+
+        self.assertEqual(a.current_revision, r1)
+
+        self.assertEqual(r1.revision_number, 1)
+        self.assertEqual(r2.revision_number, 2)
+
+        self.assertIsNone(r1.previous_revision)
+        self.assertEqual(r2.previous_revision, r1)
+
+
+class PluginBaseModelTest(TestCase):
+    def test_simple_plugin(self):
+
+        a = Article.objects.create()
+        ar = ArticleRevision.objects.create(article=a, title="test")
+
+        p = SimplePlugin(article=a)
+        p.save()
+
+        self.assertIsNotNone(p.article_revision)
+        self.assertNotEqual(p.article_revision, ar)
+        self.assertEqual(p.article_revision, a.current_revision)
+        self.assertEqual(p.article_revision.previous_revision, ar)
+
+    def test_default_fields_plugins(self):
+        a = Article.objects.create()
+        r = RevisionPlugin.objects.create(article=a)
+
+        self.assertIsNone(r.current_revision)
+
+    def test_reusable_plugins_related(self):
+        a1 = Article.objects.create()
+        a2 = Article.objects.create()
+
+        p = ReusablePlugin.objects.create(article=a1)
+        pk = p.pk
+        p.articles.add(a2)
+        p.save()
+
+        self.assertEqual(a1, p.article)
+        self.assertNotIn(a1, p.articles.all())
+
+        p.article = None
+        p.save()  # <---- Raise a RelatedObjectDoesNotExist exception
+
+        self.assertIsEqual(p.article, a2)
+
+        a2.delete()
+        with self.assertRaises(ReusablePlugin.DoesNotExist):
+            ReusablePlugin.objects.get(pk=pk)
+
+    def test_revision_plugin_revision_saving(self):
+        a = Article.objects.create()
+        p = RevisionPlugin.objects.create(article=a)
+
+        r1 = RevisionPluginRevision(plugin=p)
+        r1.save()
+        r2 = RevisionPluginRevision(plugin=p)
+        r2.save()
+
+        self.assertEqual(r1, p.current_revision)
+
+        self.assertEqual(r1.revision_number, 1)
+        self.assertEqual(r2.revision_number, 2)
+
+        self.assertIsNone(r1.previous_revision)
+        self.assertEqual(r2.previous_revision, r1)
+
+    def test_revision_plugin_revision_addrevision(self):
+        a = Article.objects.create()
+        p = RevisionPlugin.objects.create(article=a)
+
+        r1 = RevisionPluginRevision()
+        p.add_revision(r1)
+        r2 = RevisionPluginRevision(plugin=p)
+        r2.save()
+        p.add_revision(r2)
+        r3 = RevisionPluginRevision()
+        p.add_revision(r3)
+
+        self.assertEqual(r3, p.current_revision)
+
+        self.assertEqual(r1.revision_number, 1)
+        self.assertEqual(r2.revision_number, 2)
+        self.assertEqual(r3.revision_number, 3)
+
+        self.assertEqual(r1.plugin, p)
+
+        self.assertIsNone(r1.previous_revision)
+        self.assertEqual(r2.previous_revision, r1)
+        self.assertEqual(r3.previous_revision, r2)
